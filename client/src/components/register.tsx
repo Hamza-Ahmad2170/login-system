@@ -11,7 +11,10 @@ export default function Register() {
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
-      const resp = await api.post("user/register", {
+      const resp = await api.post("/user/register", {
+        headers: {
+          "Content-Type": "application/json",
+        },
         email,
         password,
       });
@@ -19,7 +22,9 @@ export default function Register() {
       setPassword("");
       console.log(resp);
     } catch (error) {
-      console.log(error);
+      if (error instanceof Error) {
+        console.log(error.message);
+      }
     }
   };
 

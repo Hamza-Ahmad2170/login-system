@@ -6,15 +6,14 @@ import env from "../config/env.js";
 export interface User extends mongoose.Document {
   email: string;
   password: string;
-  refreshToken: string[];
-  // refreshToken: {
-  //   token: string;
-  //   userAgent: {
-  //     browser: string;
-  //     os: string;
-  //   };
-  //   // expiresAt: Date;
-  // }[];
+  // refreshToken: string[];
+  refreshToken: {
+    token: string;
+    deviceInfo: {
+      browser: string;
+      os: string;
+    };
+  }[];
 
   isPasswordCorrect(password: string): Promise<boolean>;
   generateRefreshToken(): string;
@@ -35,34 +34,30 @@ const userSchema = new mongoose.Schema({
     trim: true,
   },
 
-  refreshToken: [
-    {
-      type: String,
-      trim: true,
-    },
-  ],
   // refreshToken: [
   //   {
-  //     token: {
-  //       type: String,
-  //       required: true, // Ensure tokens are not empty
-  //     },
-  //     userAgent: {
-  //       browser: {
-  //         type: String,
-  //         required: true, // Makes sure browser details are always logged
-  //       },
-  //       os: {
-  //         type: String,
-  //         required: true, // Makes sure OS details are always logged
-  //       },
-  //     },
-  //     // expiresAt: {
-  //     //   type: Date,
-  //     //   required: true, // Ensures tokens have expiration dates
-  //     // },
+  //     type: String,
+  //     trim: true,
   //   },
   // ],
+  refreshToken: [
+    {
+      token: {
+        type: String,
+        required: true, // Ensure tokens are not empty
+      },
+      deviceInfo: {
+        browser: {
+          type: String,
+          required: true, // Makes sure browser details are always logged
+        },
+        os: {
+          type: String,
+          required: true, // Makes sure OS details are always logged
+        },
+      },
+    },
+  ],
 });
 
 userSchema.pre("save", async function (next) {
@@ -91,8 +86,8 @@ userSchema.methods.generateAccessToken = function () {
     },
     env.ACCESS_TOKEN_SECRET,
     {
-      expiresIn: env.ACCESS_TOKEN_EXPIRY,
-      // expiresIn: "10s",
+      // expiresIn: env.ACCESS_TOKEN_EXPIRY,
+      expiresIn: "30s",
     }
   );
 };

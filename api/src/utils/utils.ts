@@ -1,9 +1,9 @@
 import { UAParser } from "ua-parser-js";
-import { request } from "express";
+import type { Request } from "express";
 
-export const getUserAgent = () => {
-  const parser = new UAParser(request.headers["user-agent"]).getResult();
-  console.log("parser", parser);
+export const getUserAgent = (req: Request) => {
+  const parser = new UAParser(req.headers["user-agent"]).getResult();
+  console.log(parser);
 
   return {
     browser: parser.browser.name || "unknown",

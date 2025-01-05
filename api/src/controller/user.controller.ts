@@ -1,4 +1,5 @@
 import asyncErrorHandler from "../utils/asyncErrorHandler.js";
+
 import type { NextFunction, Request, Response } from "express";
 import { userValidation } from "../validations/user.js";
 import ApiError from "../utils/ApiError.js";
@@ -48,6 +49,8 @@ const login = asyncErrorHandler(
 
     if (!loginUser.success) {
       const error = loginUser.error.flatten().fieldErrors;
+      console.log(error);
+
       return next(new ApiError("Validation failed", 400, error));
     }
 
@@ -58,48 +61,32 @@ const login = asyncErrorHandler(
       return next(new ApiError("Authentication failed", 401));
     }
 
-    // const refreshToken = req.cookies?.refreshToken || null;
+    // Remove existing token for this device
+    const userAgent = getUserAgent(req);
+    await User.updateOne(
+      { email: userFound.email },
+      {
+        $pull: {
+          refreshToken: {
+            "deviceInfo.browser": userAgent.browser,
+            "deviceInfo.os": userAgent.os,
+          },
+        },
+      }
+    );
 
-    // if (refreshToken) {
-    //   userFound.refreshToken = userFound.refreshToken.filter(
-    //     (rt) => rt !== refreshToken
-    //   );
-
-    //   res.clearCookie("refreshToken");
-    // }
-
-    // const userAgent = getUserAgent();
-
-    // const delete1 = await User.updateOne(
-    //   { email: userFound.email }, // Match the user by email
-    //   {
-    //     $pull: {
-    //       refreshToken: {
-    //         userAgent: {
-    //           browser: userAgent.browser,
-    //           os: userAgent.os,
-    //         },
-    //       },
-    //     },
-    //   }
-    // );
-
-    // console.clear();
-    // console.log("delete1", delete1);
-
-    // userFound.save();
-
-    const { accessToken, refreshToken } = await generateToken(userFound);
+    const { accessToken, refreshToken } = await generateToken(userFound, req);
     // userFound.refreshToken = [];
     // await userFound.save();
 
     res.cookie("refreshToken", refreshToken, {
-      expires: EXPIRE,
-      httpOnly: true, // prevents javascript access
-      sameSite: "strict",
-      // secure: true,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      httpOnly: true,
       path: "/",
-      // maxAge: 7 * 24 * 60 * 60 * 1000,
+      sameSite: "lax",
+      // secure: process.env.NODE_ENV === "production",
+      secure: false, // Only for local development
+      domain: "localhost", // Or your domain in production
     });
 
     return res.status(200).json({
@@ -110,25 +97,126 @@ const login = asyncErrorHandler(
   }
 );
 
+// const refreshTokenHandler = asyncErrorHandler(
+//   async (req: Request, res: Response, next: NextFunction) => {
+//     const existingRefreshToken = req.cookies.refreshToken || null;
+//     console.log("existingRefreshToken", existingRefreshToken);
+
+//     if (!existingRefreshToken) {
+//       return next(new ApiError("no refresh token found", 401));
+//     }
+
+//     // Find user with this refresh token
+//     const foundUser = await User.findOne({
+//       refreshToken: existingRefreshToken,
+//     });
+
+//     // const foundUser = await User.findOne({
+//     //   "refreshToken.token": existingRefreshToken, // Match the token field inside objects
+//     // });
+
+//     // Handle potential token reuse
+//     if (!foundUser) {
+//       jwt.verify(
+//         existingRefreshToken,
+//         env.REFRESH_TOKEN_SECRET,
+//         async (
+//           error: jwt.VerifyErrors | null,
+//           decoded: string | jwt.JwtPayload | undefined
+//         ) => {
+//           if (error) {
+//             return next(new ApiError("Invalid refresh token", 401));
+//           }
+
+//           console.log("Detected refresh token reuse!");
+//           const { _id, email } = decoded as RefreshTokenPayload;
+
+//           const hackedUser = await User.findOne({ email });
+//           if (hackedUser) {
+//             hackedUser.refreshToken = [];
+//             await hackedUser.save();
+//           }
+//         }
+//       );
+//       return next(new ApiError("Token reuse detected", 403));
+//     }
+//     const useragent = getUserAgent(req);
+
+//     // Filter out the current refresh token
+//     const newRefreshTokenArray = foundUser.refreshToken.filter(
+//       (rt) => rt !== existingRefreshToken
+//     );
+//     foundUser.refreshToken = newRefreshTokenArray;
+//     console.log("token array", (foundUser.refreshToken = newRefreshTokenArray));
+
+//     await foundUser.save({ validateBeforeSave: false });
+
+//     // Verify the existing token
+//     jwt.verify(
+//       existingRefreshToken,
+//       env.REFRESH_TOKEN_SECRET,
+//       async (
+//         error: jwt.VerifyErrors | null,
+//         decoded: string | jwt.JwtPayload | undefined
+//       ) => {
+//         if (error) {
+//           console.log("expired refresh token");
+//           foundUser.refreshToken = [...newRefreshTokenArray];
+//           await foundUser.save();
+//           return next(new ApiError("Refresh token expired", 401));
+//         }
+
+//         const { _id, email } = decoded as RefreshTokenPayload;
+//         if (foundUser.email !== email) {
+//           return next(new ApiError("Invalid refresh token", 403));
+//         }
+
+//         // Generate new tokens
+//         const { accessToken, refreshToken: newRefreshToken } =
+//           await generateToken(foundUser, req);
+//         // await foundUser.save();
+
+//         // Set new refresh token cookie
+//         res.cookie("refreshToken", newRefreshToken, {
+//           expires: EXPIRE,
+//           httpOnly: true,
+//           sameSite: "strict",
+//           // secure: true, // Enable in production
+//           path: "/",
+//         });
+
+//         return res.status(200).json({
+//           success: true,
+//           message: "Refresh token updated successfully",
+//           accessToken,
+//         });
+//       }
+//     );
+//   }
+// );
+
 const refreshTokenHandler = asyncErrorHandler(
   async (req: Request, res: Response, next: NextFunction) => {
     const existingRefreshToken = req.cookies.refreshToken || null;
-    console.log("existingRefreshToken", existingRefreshToken);
+    const userAgent = getUserAgent(req);
 
     if (!existingRefreshToken) {
       return next(new ApiError("no refresh token found", 401));
     }
 
-    // Find user with this refresh token
     const foundUser = await User.findOne({
-      refreshToken: existingRefreshToken,
+      $and: [
+        {
+          "refreshToken.token": existingRefreshToken,
+          "refreshToken.deviceInfo.browser": userAgent.browser,
+          "refreshToken.deviceInfo.os": userAgent.os,
+        },
+      ],
+      // "refreshToken.token": existingRefreshToken,
     });
 
-    // const foundUser = await User.findOne({
-    //   "refreshToken.token": existingRefreshToken, // Match the token field inside objects
-    // });
+    console.log(foundUser);
 
-    // Handle potential token reuse
     if (!foundUser) {
       jwt.verify(
         existingRefreshToken,
@@ -137,13 +225,9 @@ const refreshTokenHandler = asyncErrorHandler(
           error: jwt.VerifyErrors | null,
           decoded: string | jwt.JwtPayload | undefined
         ) => {
-          if (error) {
-            return next(new ApiError("Invalid refresh token", 401));
-          }
+          if (error) return next(new ApiError("Invalid refresh token", 401));
 
-          console.log("Detected refresh token reuse!");
-          const { _id, email } = decoded as RefreshTokenPayload;
-
+          const { email } = decoded as RefreshTokenPayload;
           const hackedUser = await User.findOne({ email });
           if (hackedUser) {
             hackedUser.refreshToken = [];
@@ -153,18 +237,18 @@ const refreshTokenHandler = asyncErrorHandler(
       );
       return next(new ApiError("Token reuse detected", 403));
     }
-    const useragent = getUserAgent();
 
-    // Filter out the current refresh token
-    const newRefreshTokenArray = foundUser.refreshToken.filter(
-      (rt) => rt !== existingRefreshToken
+    // Remove current device's token
+    foundUser.refreshToken = foundUser.refreshToken.filter(
+      (rt) =>
+        !(
+          rt.deviceInfo.browser === userAgent.browser &&
+          rt.deviceInfo.os === userAgent.os
+        )
     );
-    foundUser.refreshToken = newRefreshTokenArray;
-    console.log("token array", (foundUser.refreshToken = newRefreshTokenArray));
 
     await foundUser.save({ validateBeforeSave: false });
 
-    // Verify the existing token
     jwt.verify(
       existingRefreshToken,
       env.REFRESH_TOKEN_SECRET,
@@ -173,28 +257,21 @@ const refreshTokenHandler = asyncErrorHandler(
         decoded: string | jwt.JwtPayload | undefined
       ) => {
         if (error) {
-          console.log("expired refresh token");
-          foundUser.refreshToken = [...newRefreshTokenArray];
-          await foundUser.save();
           return next(new ApiError("Refresh token expired", 401));
         }
 
-        const { _id, email } = decoded as RefreshTokenPayload;
+        const { email } = decoded as RefreshTokenPayload;
         if (foundUser.email !== email) {
           return next(new ApiError("Invalid refresh token", 403));
         }
 
-        // Generate new tokens
         const { accessToken, refreshToken: newRefreshToken } =
-          await generateToken(foundUser);
-        // await foundUser.save();
+          await generateToken(foundUser, req);
 
-        // Set new refresh token cookie
         res.cookie("refreshToken", newRefreshToken, {
           expires: EXPIRE,
           httpOnly: true,
           sameSite: "strict",
-          // secure: true, // Enable in production
           path: "/",
         });
 
